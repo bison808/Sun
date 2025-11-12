@@ -1,0 +1,88 @@
+# Docker Compose for ML Services
+
+version: '3.8'
+
+services:
+  ml-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: solar-ml-api
+    ports:
+      - "8000:8000"
+      - "9090:9090"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DB_HOST=postgres
+      - DB_NAME=solar_cycle_db
+      - DB_USER=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./mlruns:/app/mlruns
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - solar-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  postgres:
+    image: postgres:15
+    container_name: solar-postgres
+    environment:
+      - POSTGRES_DB=solar_cycle_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - solar-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: solar-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - solar-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.10.0
+    container_name: solar-mlflow
+    ports:
+      - "5000:5000"
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=sqlite:///mlflow/mlflow.db
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=/mlflow/artifacts
+    volumes:
+      - ./mlruns:/mlflow
+    networks:
+      - solar-network
+    restart: unless-stopped
+    command: mlflow server --host 0.0.0.0 --port 5000
+
+networks:
+  solar-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:

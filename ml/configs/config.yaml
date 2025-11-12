@@ -1,0 +1,324 @@
+# Solar Cycle ML Configuration
+
+project:
+  name: "solar-cycle-ml"
+  version: "1.0.0"
+  description: "ML models for solar activity prediction"
+
+paths:
+  data_raw: "../data/raw"
+  data_processed: "../data/processed"
+  data_features: "../data/features"
+  models: "../models"
+  logs: "../logs/ml"
+  mlflow_tracking: "../mlruns"
+
+data_sources:
+  sidc_sunspot:
+    url: "https://www.sidc.be/SILSO/DATA/SN_d_tot_V2.0.csv"
+    description: "Daily sunspot numbers (1749-present)"
+    columns: ["year", "month", "day", "decimal_year", "ssn", "ssn_std", "n_obs", "definitive"]
+
+  sidc_smoothed:
+    url: "https://www.sidc.be/SILSO/DATA/SN_ms_tot_V2.0.csv"
+    description: "Monthly smoothed sunspot numbers"
+    columns: ["year", "month", "decimal_year", "ssn_smooth", "ssn_std", "n_obs", "definitive"]
+
+  noaa_f107:
+    url: "https://services.swpc.noaa.gov/json/f10_7_cm_flux.json"
+    description: "F10.7 cm radio flux"
+
+  geomagnetic:
+    url: "https://services.swpc.noaa.gov/json/planetary_k_index_1m.json"
+    description: "Planetary K-index"
+
+preprocessing:
+  missing_value_strategy: "interpolate"  # interpolate, forward_fill, drop
+  interpolation_max_gap: 7  # days
+  normalization: "minmax"  # minmax, standard, robust
+  normalize_range: [0, 1]
+
+  smoothing:
+    method: "butterworth"  # butterworth, savgol, rolling
+    window_size: 13  # months for 13-month smooth
+
+  feature_engineering:
+    moving_averages: [6, 12, 24]  # months
+    rate_of_change_windows: [1, 3, 6, 12]  # months
+    fourier_periods: [11, 22, 132]  # years (11-year, 22-year, Gleissberg)
+    lag_features: [1, 3, 6, 12, 24]  # months
+
+data_splits:
+  train:
+    start: 1749
+    end: 2005
+    percentage: 0.80
+
+  validation:
+    start: 2005
+    end: 2015
+    percentage: 0.10
+
+  test:
+    start: 2015
+    end: 2025
+    percentage: 0.10
+
+  walk_forward_validation:
+    enabled: true
+    n_splits: 5
+    min_train_size: 2000  # data points
+
+# Model 1: Short-Term LSTM
+short_term_lstm:
+  name: "short_term_lstm"
+  priority: 1
+
+  architecture:
+    input_window: 90  # days
+    output_horizon: 30  # days
+    lstm_layers: [128, 64, 32]
+    dropout: 0.2
+    bidirectional: true
+    attention: true
+
+  training:
+    batch_size: 32
+    epochs: 100
+    learning_rate: 0.001
+    optimizer: "adam"
+    scheduler: "cosine"
+    early_stopping_patience: 15
+    reduce_lr_patience: 5
+
+  hyperparameter_search:
+    enabled: true
+    n_trials: 50
+    search_space:
+      lstm_layers: [[64, 32], [128, 64], [128, 64, 32], [256, 128, 64]]
+      dropout: [0.1, 0.2, 0.3]
+      learning_rate: [0.0001, 0.001, 0.01]
+      batch_size: [16, 32, 64]
+
+  inference:
+    update_frequency: "daily"
+    confidence_intervals: [0.68, 0.95]  # 1-sigma, 2-sigma
+    ensemble_predictions: 10  # Monte Carlo dropout
+
+# Model 2: Long-Term LSTM-FCN
+long_term_lstm_fcn:
+  name: "long_term_lstm_fcn"
+  priority: 2
+
+  architecture:
+    input_window: 264  # 22 years of monthly data
+    output_horizon: 132  # 11 years
+    lstm_units: 256
+    fcn_filters: [128, 256, 128]
+    kernel_sizes: [8, 5, 3]
+    dropout: 0.3
+
+  training:
+    batch_size: 16
+    epochs: 200
+    learning_rate: 0.0005
+    optimizer: "adamw"
+    weight_decay: 0.01
+    scheduler: "onecycle"
+    early_stopping_patience: 25
+
+  targets:
+    - cycle_amplitude  # Maximum SSN
+    - cycle_peak_time  # Time to peak
+    - cycle_duration   # Total cycle length
+    - ascent_rate      # Rise rate
+
+  inference:
+    update_frequency: "monthly"
+    uncertainty_quantification: "bayesian"  # bayesian, ensemble, conformal
+
+# Model 3: Anomaly Detection Autoencoder
+anomaly_autoencoder:
+  name: "anomaly_autoencoder"
+  priority: 3
+
+  architecture:
+    encoder_layers: [64, 32, 16, 8]
+    latent_dim: 4
+    decoder_layers: [8, 16, 32, 64]
+    activation: "relu"
+    output_activation: "sigmoid"
+
+  training:
+    batch_size: 64
+    epochs: 100
+    learning_rate: 0.001
+    optimizer: "adam"
+    loss: "mse"  # mse, mae, huber
+
+  anomaly_detection:
+    method: "reconstruction_error"  # reconstruction_error, isolation_forest, lof
+    threshold_percentile: 95
+    window_size: 7  # days
+
+  inference:
+    update_frequency: "realtime"
+    anomaly_score_range: [0, 1]
+    alert_threshold: 0.75
+
+# Model 4: Ensemble Meta-Learner
+ensemble:
+  name: "ensemble_meta_learner"
+  priority: 4
+
+  base_models:
+    - short_term_lstm
+    - long_term_lstm_fcn
+    - statistical_baseline  # ARIMA, Prophet
+
+  meta_learner:
+    type: "weighted_average"  # weighted_average, stacking, blending
+    architecture: [32, 16]  # hidden layers for stacking
+
+  weights:
+    method: "performance_based"  # performance_based, learned, equal
+    performance_metric: "rmse"
+    lookback_window: 90  # days for performance calculation
+
+  training:
+    batch_size: 32
+    epochs: 50
+    learning_rate: 0.001
+
+  inference:
+    confidence_aggregation: "conservative"  # conservative, average, optimistic
+
+# Training Pipeline
+training:
+  gpu:
+    enabled: true
+    device: "cuda"
+    mixed_precision: true
+
+  distributed:
+    enabled: false
+    strategy: "ddp"  # ddp, horovod
+
+  checkpointing:
+    enabled: true
+    save_best_only: true
+    monitor_metric: "val_loss"
+    mode: "min"
+
+  logging:
+    mlflow: true
+    wandb: false
+    tensorboard: true
+    log_interval: 10  # batches
+
+  metrics:
+    - rmse
+    - mae
+    - mape
+    - r2_score
+    - prediction_interval_coverage
+
+  cross_validation:
+    enabled: true
+    type: "time_series_split"
+    n_splits: 5
+
+# Model Serving
+serving:
+  api:
+    host: "0.0.0.0"
+    port: 8000
+    workers: 4
+    timeout: 30
+
+  model_format: "torchscript"  # torchscript, onnx, native
+
+  caching:
+    enabled: true
+    backend: "redis"
+    ttl: 900  # seconds (15 minutes)
+
+  batch_inference:
+    enabled: true
+    max_batch_size: 32
+    max_wait_time: 100  # ms
+
+  monitoring:
+    prometheus: true
+    metrics_port: 9090
+    log_predictions: true
+
+# MLOps
+mlops:
+  experiment_tracking:
+    backend: "mlflow"
+    tracking_uri: "file:///mlruns"
+
+  model_registry:
+    enabled: true
+    auto_register: true
+
+  versioning:
+    data: "dvc"
+    models: "mlflow"
+
+  retraining:
+    schedule: "0 0 * * 0"  # Weekly at midnight Sunday (cron)
+    trigger_on_drift: true
+    drift_threshold: 0.1
+    min_new_data_points: 100
+
+  monitoring:
+    data_drift:
+      enabled: true
+      method: "ks_test"  # ks_test, psi, kl_divergence
+      alert_threshold: 0.05
+
+    model_performance:
+      enabled: true
+      metrics: ["rmse", "mae", "mape"]
+      alert_threshold: 0.2  # 20% degradation
+
+    prediction_monitoring:
+      log_all: true
+      sample_rate: 1.0
+      alert_on_outliers: true
+
+# Database
+database:
+  postgres:
+    host: "${DB_HOST:localhost}"
+    port: 5432
+    database: "${DB_NAME:solar_cycle_db}"
+    user: "${DB_USER:postgres}"
+    password: "${DB_PASSWORD}"
+
+  tables:
+    predictions: "ml_predictions"
+    anomalies: "anomaly_detections"
+    training_metrics: "ml_training_metrics"
+    model_versions: "ml_model_versions"
+
+# Redis Cache
+redis:
+  host: "${REDIS_HOST:localhost}"
+  port: 6379
+  db: 1
+  password: "${REDIS_PASSWORD:}"
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  format: "json"
+  file: "../logs/ml/ml_service.log"
+  rotation: "1 day"
+  retention: "30 days"
+
+# Reproducibility
+random_seed: 42
+deterministic: true
