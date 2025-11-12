@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: solar-cycle-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: solar_password_2024
+      POSTGRES_DB: solar_cycle_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - solar-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: solar-cycle-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - solar-network
+
+  # Solar Cycle API
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: solar-cycle-api
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: solar_cycle_db
+      DB_USER: postgres
+      DB_PASSWORD: solar_password_2024
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      LOG_LEVEL: info
+      DATA_FETCH_INTERVAL_MINUTES: 15
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - solar-network
+
+networks:
+  solar-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
