@@ -1,0 +1,48 @@
+name: solar_cycle_app
+description: Solar Cycle Mobile App with interactive data visualizations
+
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Chart libraries
+  fl_chart: ^0.66.0
+  syncfusion_flutter_charts: ^24.1.41
+
+  # HTTP & WebSocket
+  http: ^1.1.2
+  web_socket_channel: ^2.4.0
+
+  # State management
+  provider: ^6.1.1
+
+  # Image export
+  screenshot: ^2.1.0
+  path_provider: ^2.1.1
+  share_plus: ^7.2.1
+
+  # Utilities
+  intl: ^0.18.1
+  collection: ^1.18.0
+
+  # UI
+  cupertino_icons: ^1.0.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  mockito: ^5.4.4
+  build_runner: ^2.4.7
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/
